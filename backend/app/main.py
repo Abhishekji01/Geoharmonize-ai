@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .pipeline import AUTO_ACCEPT, Entity, RunResult, run_pipeline, to_geojson
+from .pipeline import AUTO_ACCEPT, OWNER_SAME, Entity, RunResult, owner_sim, run_pipeline, to_geojson
 from .store import DecisionStore
 from .synthetic import SIZES, generate_ward
 from shapely.ops import transform as shp_transform
@@ -148,7 +148,21 @@ def run_summary(rid: str):
         "auto_accept_threshold": AUTO_ACCEPT,
         "status_counts": stat, "stages": r.stages, "benchmark": r.benchmark,
         "synthetic": True,
+        "origin_utm": _origin_utm(r),
+        "crs": "EPSG:32644",
     }
+
+
+def _origin_utm(r: RunResult) -> list[float]:
+    """UTM easting/northing of the bounds centre, which the front end uses as its map origin."""
+    from pyproj import Transformer
+    xs, ys = [], []
+    for e in r.entities:
+        b = _ll_geom_bounds(r, e)
+        xs += [b[0], b[2]]; ys += [b[1], b[3]]
+    lon, lat = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    x, y = Transformer.from_crs("EPSG:4326", "EPSG:32644", always_xy=True).transform(lon, lat)
+    return [round(x, 2), round(y, 2)]
 
 
 def _ll_geom_bounds(r: RunResult, e: Entity):
@@ -181,8 +195,11 @@ def parcel(rid: str, eid: str):
     r = get_run(rid)
     e = _find(r, eid)
     dec = store.for_run(rid).get(eid)
+    final = _effective(e, dec)["final"]
     return {
         **_props(e, dec),
+        "owner_agrees": {s: owner_sim(v, final["owner"]) >= OWNER_SAME for s, v in e.values["owner"].items()},
+        "land_use_agrees": {s: v == final["land_use"] for s, v in e.values["land_use"].items()},
         "values": {k: v for k, v in e.values.items() if k != "final"},
         "conflicts": e.conflicts, "components": e.components, "edits": e.edits,
         "detection_confidence": e.ori.props["detection_confidence"] if e.ori else None,
@@ -221,6 +238,12 @@ def undo_review(rid: str, eid: str):
     get_run(rid)
     store.delete(rid, eid)
     return {"ok": True}
+
+
+@app.get("/api/audit")
+def audit():
+    """Hash-chained log of every review decision, with a verification result."""
+    return store.audit()
 
 
 @app.get("/api/runs/{rid}/export.geojson")

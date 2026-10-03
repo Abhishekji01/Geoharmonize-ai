@@ -14,6 +14,7 @@ The site explains the idea, and the **workbench** runs it: five messy department
 | Topology repair, snapping, overlap trimming | Real, Shapely |
 | Change detection, source-aware conflict rules, confidence scoring | Real |
 | Human-in-the-loop review, decisions saved in SQLite, GeoJSON export | Real |
+| Tamper-evident audit log: every decision is hash-chained, and `/api/audit` re-verifies the chain | Real |
 | AI feature extraction from imagery | **Simulated.** The ORI boundaries and detection confidences are generated, not produced by a vision model |
 | Input data | **Synthetic.** A generated ward with a known answer, so the run can be benchmarked |
 | DSM/DTM, utility network, GNSS/CORS, ground truthing | Not modelled yet |
@@ -55,6 +56,7 @@ docker run -p 8000:8000 -v geoharmonize-data:/srv/data geoharmonize
 | GET | `/api/runs/{id}/parcels/{pid}` | Source values, conflicts, score components, edits |
 | GET | `/api/runs/{id}/review` | Human-validation queue |
 | POST / DELETE | `/api/runs/{id}/review/{pid}` | Accept or reject, choosing which source's value to keep; or undo |
+| GET | `/api/audit` | Audit log head, recent entries, and whether the hash chain still verifies |
 | GET | `/api/runs/{id}/export.geojson` | Harmonized records with source traceability |
 
 ## Layout
@@ -64,8 +66,13 @@ backend/app/synthetic.py   generated ward and its five source layers
 backend/app/pipeline.py    the seven stages, conflict rules, confidence score, benchmark
 backend/app/main.py        FastAPI routes
 backend/app/store.py       reviewer decisions (SQLite)
-frontend/src               React + TypeScript + Vite; map is hand-drawn SVG, no tile service
+frontend/src               React + TypeScript + Vite; the map is hand-drawn SVG (no tile service) with
+                           survey-sheet furniture: UTM ticks, scale bar, north arrow, live coordinates, hatching
 ```
+
+## Workbench shortcuts
+
+`J` and `K` move through parcels waiting for review, `A` accepts and jumps to the next one, `R` rejects.
 
 ## How the confidence score works
 

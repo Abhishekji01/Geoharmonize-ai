@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type FC, type ParcelDetail, type ParcelProps, type RunSummary } from "../api";
+import { api, type Audit, type FC, type ParcelDetail, type ParcelProps, type RunSummary } from "../api";
 import { useWard } from "../hooks";
 import { MapView, type LayerSpec } from "../components/MapView";
-import { C, SOURCE_LABEL, STATUS_LABEL, confidenceFill } from "../theme";
-import { ApiDown } from "./Home";
+import { C, SOURCE_LABEL, STATUS_LABEL, confidenceFill, hatchCss } from "../theme";
+import { ApiDown, Logo } from "./Home";
 
 type Queue = (ParcelProps & { decision: string | null })[];
 const COMP_LABEL: Record<string, string> = { geometry: "Boundaries agree", attributes: "Records agree", extraction: "Drone detection", coverage: "Sources covering it" };
+const typing = (t: EventTarget | null) => t instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && (t as HTMLInputElement).type !== "radio" && (t as HTMLInputElement).type !== "checkbox";
 
 export default function Workbench() {
   const [size, setSize] = useState("medium");
@@ -18,6 +19,8 @@ export default function Workbench() {
   const [harm, setHarm] = useState<FC<ParcelProps> | null>(null);
   const [summary, setSummary] = useState<RunSummary | null>(null);
   const [queue, setQueue] = useState<Queue>([]);
+  const queueRef = useRef<Queue>([]);
+  const [audit, setAudit] = useState<Audit | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ id: string; nonce: number } | null>(null);
   const [tab, setTab] = useState<"queue" | "parcel">("queue");
@@ -25,35 +28,62 @@ export default function Workbench() {
   const [show, setShow] = useState({ bld: true, cad: false, ori: false, mun: false });
 
   const runId = data?.summary.id;
+  const setQ = (q: Queue) => { queueRef.current = q; setQueue(q); };
   const refresh = useCallback(async () => {
     if (!runId) return;
-    const [h, s, q] = await Promise.all([api.harmonised(runId), api.summary(runId), api.queue(runId)]);
-    setHarm(h); setSummary(s); setQueue(q);
+    const [h, s, q, a] = await Promise.all([api.harmonised(runId), api.summary(runId), api.queue(runId), api.audit()]);
+    setHarm(h); setSummary(s); setQ(q); setAudit(a);
   }, [runId]);
 
-  useEffect(() => { if (data) { setHarm(data.harm); setSummary(data.summary); setSelected(null); setTab("queue"); api.queue(data.summary.id).then(setQueue); } }, [data]);
+  useEffect(() => {
+    if (!data) return;
+    setHarm(data.harm); setSummary(data.summary); setSelected(null); setTab("queue");
+    api.queue(data.summary.id).then(setQ); api.audit().then(setAudit);
+  }, [data]);
 
   const pick = (id: string | null, zoom = false) => {
     setSelected(id);
     if (id) { setTab("parcel"); if (zoom) setFocus({ id, nonce: Date.now() }); }
   };
+  const step = useCallback((dir: 1 | -1) => {
+    const open = queueRef.current.filter((q) => !q.decision);
+    if (!open.length) return;
+    const i = open.findIndex((q) => q.id === selected);
+    const next = open[(i + dir + open.length) % open.length] ?? open[0];
+    pick(next.id, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+  const advance = useCallback(() => {
+    const first = queueRef.current.find((q) => !q.decision);
+    if (first) pick(first.id, true); else setTab("queue");
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "j") { e.preventDefault(); step(1); }
+      if (e.key === "k") { e.preventDefault(); step(-1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [step]);
 
   const layers = useMemo<LayerSpec[]>(() => {
     if (!data || !harm) return [];
     const out: LayerSpec[] = [];
-    if (show.bld) out.push({ id: "bld", data: data.bld, style: () => ({ fill: C.buildings, fillOpacity: 0.28 }) });
+    if (show.bld) out.push({ id: "bld", data: data.bld, style: () => ({ fill: C.buildings, fillOpacity: 0.26 }) });
     if (show.mun) out.push({ id: "mun", data: data.mun, style: () => ({ stroke: C.municipal, width: 1, dash: "3 2" }) });
-    if (show.cad) out.push({ id: "cad", data: data.cad, style: () => ({ stroke: C.cadastral, width: 1.2 }) });
-    if (show.ori) out.push({ id: "ori", data: data.ori, style: () => ({ stroke: C.ori, width: 1.2 }) });
+    if (show.cad) out.push({ id: "cad", data: data.cad, style: () => ({ stroke: C.cadastral, width: 1.3 }) });
+    if (show.ori) out.push({ id: "ori", data: data.ori, style: () => ({ stroke: C.ori, width: 1.3 }) });
     out.push({
       id: "harm", data: harm, interactive: true,
       style: (f) => {
         const p = f.properties as ParcelProps;
-        if (mode === "confidence") return { fill: confidenceFill(p.confidence), fillOpacity: 0.85, stroke: p.status === "needs_review" ? C.flag : "#fff", width: p.status === "needs_review" ? 2 : 0.8 };
-        if (p.status === "needs_review") return { fill: C.flag, fillOpacity: 0.45, stroke: C.flag, width: 1.3 };
-        if (p.status === "validated") return { fill: C.ok, fillOpacity: 0.8, stroke: C.ok, width: 1.2 };
-        if (p.status === "rejected") return { fill: "#94A3B8", fillOpacity: 0.45, stroke: "#64748B", width: 1.2, dash: "4 3" };
-        return { fill: C.ok, fillOpacity: 0.2, stroke: C.ok, width: 0.9 };
+        if (mode === "confidence") return { fill: confidenceFill(p.confidence), fillOpacity: show.cad || show.ori || show.mun ? 0.7 : 1, stroke: p.status === "needs_review" ? C.flag : "#fff", width: p.status === "needs_review" ? 2 : 0.8 };
+        if (p.status === "needs_review") return { fill: "pat:red", stroke: C.flag, width: 1.5 };
+        if (p.status === "validated") return { fill: C.ok, fillOpacity: 0.85, stroke: C.ok, width: 1.2 };
+        if (p.status === "rejected") return { fill: "pat:ink", stroke: C.ink, width: 1.2, dash: "4 3" };
+        return { fill: "#E2F1E8", fillOpacity: show.cad || show.ori || show.mun ? 0.55 : 1, stroke: C.ok, width: 0.9 };
       },
     });
     return out;
@@ -65,10 +95,7 @@ export default function Workbench() {
   return (
     <div className="wb">
       <header className="wb-bar">
-        <Link to="/" className="brand" aria-label="Back to the overview">
-          <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden><rect width="32" height="32" rx="3" fill="#0E1A2B" /><path d="M5 9h13v10H5z" fill="none" stroke="#7B86F2" strokeWidth="2" /><path d="M12 13h14v11H12z" fill="none" stroke="#F0A81A" strokeWidth="2" /><path d="M12 13h6v6h-6z" fill="#17B879" /></svg>
-          Workbench
-        </Link>
+        <Link to="/" className="brand" aria-label="Back to the overview"><Logo size={22} />Workbench</Link>
         <div className="wb-run">
           <label>Ward size
             <select value={size} onChange={(e) => setSize(e.target.value)}>
@@ -81,17 +108,18 @@ export default function Workbench() {
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
           </label>
         </div>
-        <div className="wb-count" aria-live="polite">
-          {summary && <>{summary.parcels} parcels, {counts.auto_accepted ?? 0} accepted automatically, {(counts.validated ?? 0)} validated, {open} waiting for a person</>}
-        </div>
+        <p className="wb-count" aria-live="polite">
+          {summary && <><b>{summary.parcels}</b> parcels, <b>{counts.auto_accepted ?? 0}</b> accepted automatically, <b>{counts.validated ?? 0}</b> validated, <b>{open}</b> waiting for a person</>}
+        </p>
+        <AuditBadge audit={audit} />
         {runId && <a className="btn small" href={api.exportUrl(runId)}>Export GeoJSON</a>}
       </header>
 
       <div className="wb-body">
         <section className="wb-map" aria-label="Map">
-          {data && harm ? (
+          {data && harm && summary ? (
             <>
-              <MapView bounds={data.summary.bounds} layers={layers} selectedId={selected} onSelect={(id) => pick(id)} focus={focus} label="Harmonized parcels" />
+              <MapView bounds={data.summary.bounds} origin={summary.origin_utm} furniture layers={layers} selectedId={selected} onSelect={(id) => pick(id)} focus={focus} label="Harmonized parcels" />
               <div className="wb-tools">
                 <fieldset>
                   <legend>Colour by</legend>
@@ -100,16 +128,16 @@ export default function Workbench() {
                 </fieldset>
                 <fieldset>
                   <legend>Source layers underneath</legend>
-                  {([["cad", "Cadastral map", C.cadastral], ["ori", "Drone ORI", C.ori], ["mun", "Municipal GIS", C.municipal], ["bld", "Buildings", C.buildings]] as const).map(([k, l, c]) => (
+                  {([["cad", "Cadastral map", C.cadastral], ["ori", "Drone imagery", C.ori], ["mun", "Municipal GIS", C.municipal], ["bld", "Buildings", C.buildings]] as const).map(([k, l, c]) => (
                     <label key={k}><input type="checkbox" checked={show[k]} onChange={(e) => setShow({ ...show, [k]: e.target.checked })} /><i style={{ background: c }} />{l}</label>
                   ))}
                 </fieldset>
               </div>
               <ul className="map-legend wb-legend">
                 {mode === "status" ? (
-                  <><li><i style={{ background: C.ok, opacity: 0.4 }} />Accepted automatically</li><li><i style={{ background: C.flag }} />Needs review</li><li><i style={{ background: C.ok }} />Validated</li><li><i style={{ background: "#94A3B8" }} />Rejected</li></>
+                  <><li><i style={{ background: "#E2F1E8", border: `1px solid ${C.ok}` }} />Accepted automatically</li><li><i style={{ background: hatchCss(C.flag), border: `1px solid ${C.flag}` }} />Needs review</li><li><i style={{ background: C.ok }} />Validated</li><li><i style={{ background: hatchCss(C.ink), border: `1px solid ${C.ink}` }} />Rejected</li></>
                 ) : (
-                  <><li><i style={{ background: confidenceFill(0.98) }} />High confidence</li><li><i style={{ background: confidenceFill(0.5) }} />Low</li><li><i style={{ background: C.flag }} />Outlined: needs review</li></>
+                  <><li><i style={{ background: confidenceFill(0.98) }} />High confidence</li><li><i style={{ background: confidenceFill(0.5) }} />Low</li><li><i style={{ background: hatchCss(C.flag), border: `1px solid ${C.flag}` }} />Needs review</li></>
                 )}
               </ul>
             </>
@@ -122,26 +150,46 @@ export default function Workbench() {
             <button role="tab" aria-selected={tab === "parcel"} onClick={() => setTab("parcel")} disabled={!selected}>Parcel{selected ? ` ${selected}` : ""}</button>
           </div>
           {tab === "queue" && (
-            <ul className="queue">
-              {queue.length === 0 && <li className="empty">Nothing to review. Every parcel was accepted automatically.</li>}
-              {queue.map((q) => (
-                <li key={q.id}>
-                  <button onClick={() => pick(q.id, true)} className={q.id === selected ? "on" : ""}>
-                    <span className="q-top"><b>{q.id}</b><span className="q-key">{q.key ?? "no plot reference"}</span><span className="q-score">{q.confidence.toFixed(2)}</span></span>
-                    <span className="q-why">{q.decision ? (q.decision === "accept" ? "Validated" : "Rejected") : q.review_reasons[0] ?? "Low confidence"}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="queue">
+                {queue.length === 0 && <li className="empty">Nothing to review. Every parcel was accepted automatically.</li>}
+                {queue.map((q) => (
+                  <li key={q.id}>
+                    <button onClick={() => pick(q.id, true)} className={q.id === selected ? "on" : ""}>
+                      <span className="q-top"><b>{q.id}</b><span className="q-key">{q.key ?? "no plot reference"}</span><span className="q-score">{q.confidence.toFixed(2)}</span></span>
+                      <span className={`q-why ${q.decision ? "done" : ""}`}>{q.decision ? (q.decision === "accept" ? "Validated" : "Rejected") : q.review_reasons[0] ?? "Low confidence"}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="keys">Keys: <kbd>J</kbd> next, <kbd>K</kbd> previous, <kbd>A</kbd> accept, <kbd>R</kbd> reject</p>
+            </>
           )}
-          {tab === "parcel" && runId && selected && <ParcelPanel runId={runId} id={selected} onChanged={refresh} />}
+          {tab === "parcel" && runId && selected && <ParcelPanel runId={runId} id={selected} onChanged={refresh} onAdvance={advance} />}
         </aside>
       </div>
     </div>
   );
 }
 
-function ParcelPanel({ runId, id, onChanged }: { runId: string; id: string; onChanged: () => Promise<void> }) {
+function AuditBadge({ audit }: { audit: Audit | null }) {
+  if (!audit) return null;
+  return (
+    <details className="audit">
+      <summary className={audit.ok ? "ok" : "bad"}>
+        <u aria-hidden />{audit.length === 0 ? "Audit log empty" : audit.ok ? `Audit log intact, ${audit.length} ${audit.length === 1 ? "entry" : "entries"}` : `Audit log broken at entry ${audit.broken_at}`}
+      </summary>
+      <div className="audit-pop">
+        <p>Each decision is chained to the one before it. Changing or deleting an old entry breaks every hash after it.</p>
+        {audit.recent.length === 0 ? <p className="muted">Decisions you make will be listed here.</p> : (
+          <ol>{audit.recent.map((r) => <li key={r.seq}><b>{r.seq}</b><span>{r.parcel} {r.action}</span><code>{r.hash}</code></li>)}</ol>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function ParcelPanel({ runId, id, onChanged, onAdvance }: { runId: string; id: string; onChanged: () => Promise<void>; onAdvance: () => void }) {
   const [d, setD] = useState<ParcelDetail | null>(null);
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
@@ -159,22 +207,33 @@ function ParcelPanel({ runId, id, onChanged }: { runId: string; id: string; onCh
   }, [runId, id]);
   useEffect(() => { setD(null); load().catch((e) => setErr(String(e.message))); }, [load]);
 
-  if (!d) return <div className="panel pad">{err ?? "Loading parcel…"}</div>;
-
-  const pending = d.conflicts.filter((c) => c.status === "flagged" && (c.field === "owner" || c.field === "land_use") && !choice[c.field]);
-  const act = async (decision: "accept" | "reject") => {
+  const pending = d ? d.conflicts.filter((c) => c.status === "flagged" && (c.field === "owner" || c.field === "land_use") && !choice[c.field]) : [];
+  const canAct = !!d && d.status === "needs_review" && !d.decision && !busy;
+  const act = useCallback(async (decision: "accept" | "reject") => {
     setBusy(true); setErr(null);
-    try { await api.review(runId, id, { decision, resolutions: decision === "accept" ? choice : {}, note }); await load(); await onChanged(); }
+    try { await api.review(runId, id, { decision, resolutions: decision === "accept" ? choice : {}, note }); await onChanged(); onAdvance(); }
     catch (e) { setErr(e instanceof Error ? e.message : "Could not save the decision"); }
     setBusy(false);
-  };
+  }, [runId, id, choice, note, onChanged, onAdvance]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || !canAct) return;
+      if (e.key === "a" && pending.length === 0) { e.preventDefault(); act("accept"); }
+      if (e.key === "r") { e.preventDefault(); act("reject"); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canAct, pending.length, act]);
+
+  if (!d) return <div className="panel pad">{err ?? "Loading parcel…"}</div>;
   const undo = async () => { setBusy(true); await api.undo(runId, id); await load(); await onChanged(); setBusy(false); };
   const seen = new Set<string>();
 
   return (
     <div className="panel">
       <div className="p-head">
-        <div><h2>{d.id}</h2><p>{d.key ?? "No plot reference"}</p></div>
+        <div><h2>{d.key ?? d.id}</h2><p>{d.id}</p></div>
         <div className="p-score"><b>{d.confidence.toFixed(2)}</b><small>confidence</small></div>
       </div>
       <p className={`p-status s-${d.status}`}>{STATUS_LABEL[d.status]}</p>
@@ -232,8 +291,8 @@ function ParcelPanel({ runId, id, onChanged }: { runId: string; id: string; onCh
           <label className="note">Note for the record <input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder="Optional" /></label>
           {pending.length > 0 && <p className="hint">Choose a value for {pending.map((p) => p.field.replace("_", " ")).join(" and ")} to accept.</p>}
           <div className="row">
-            <button className="btn" disabled={busy || pending.length > 0} onClick={() => act("accept")}>Accept parcel</button>
-            <button className="btn ghost" disabled={busy} onClick={() => act("reject")}>Reject parcel</button>
+            <button className="btn" disabled={busy || pending.length > 0} onClick={() => act("accept")}>Accept and next <kbd>A</kbd></button>
+            <button className="btn ghost" disabled={busy} onClick={() => act("reject")}>Reject <kbd>R</kbd></button>
           </div>
         </div>
       )}

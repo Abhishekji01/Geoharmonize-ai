@@ -13,7 +13,7 @@ export type Stage = { n: number; name: string; ms: number; summary: string; tech
 export type Benchmark = Record<string, number | string | null>;
 export type RunSummary = {
   id: string; seed: number; size: string; parcels: number; bounds: [number, number, number, number];
-  cadastral_shift_m: { east: number; north: number }; auto_accept_threshold: number;
+  cadastral_shift_m: { east: number; north: number }; auto_accept_threshold: number; origin_utm: [number, number]; crs: string;
   status_counts: Record<string, number>; stages: Stage[]; benchmark: Benchmark;
 };
 export type Conflict = {
@@ -24,8 +24,10 @@ export type Conflict = {
 export type ParcelDetail = ParcelProps & {
   values: { owner: Record<string, string>; land_use: Record<string, string>; area_sqm: Record<string, number>; geometry_area_sqm: number };
   conflicts: Conflict[]; components: Record<string, number>; edits: string[]; detection_confidence: number | null;
+  owner_agrees: Record<string, boolean>; land_use_agrees: Record<string, boolean>;
   buildings: number; decision: { decision: "accept" | "reject"; resolutions: Record<string, string>; note: string; decided_at: string } | null;
 };
+export type Audit = { ok: boolean; length: number; head: string | null; broken_at: number | null; recent: { seq: number; at: string; run: string; parcel: string; action: string; hash: string }[] };
 export type CatalogRow = { name: string; status: "modelled" | "extraction" | "planned"; note: string };
 
 async function j<T>(res: Response): Promise<T> {
@@ -54,5 +56,6 @@ export const api = {
   review: (id: string, pid: string, body: { decision: "accept" | "reject"; resolutions: Record<string, string>; note: string }) =>
     fetch(`/api/runs/${id}/review/${pid}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => j<ParcelProps>(r)),
   undo: (id: string, pid: string) => fetch(`/api/runs/${id}/review/${pid}`, { method: "DELETE" }).then((r) => j<{ ok: boolean }>(r)),
+  audit: () => fetch("/api/audit", { cache: "no-store" }).then((r) => j<Audit>(r)),
   exportUrl: (id: string) => `/api/runs/${id}/export.geojson`,
 };

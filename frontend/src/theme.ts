@@ -1,26 +1,31 @@
-// One colour per source, used the same way on every map in the product.
+// Colours follow survey-sheet conventions and mean the same thing on every map.
 export const C = {
-  cadastral: "#3A45D6",
-  ori: "#D88A00",
-  municipal: "#00857A",
-  buildings: "#5C6B7E",
-  revenue: "#8A5BD0",
-  ok: "#0E9B63",
-  flag: "#CF2A6A",
-  ink: "#0E1A2B",
-  mute: "#5B6A7C",
-  line: "#C9D2DD",
+  sheet: "#F9FAFA",
+  ink: "#101B27",
+  ink2: "#2F3E4E",
+  mute: "#5A6773",
+  soft: "#C9D1D6",
+  cadastral: "#2438C9", // survey blue
+  ori: "#D58A00",       // orange pencil
+  municipal: "#00796F",
+  buildings: "#55606B",
+  ok: "#1E8E5A",
+  flag: "#D63B2F",      // red pencil: somebody has to look at this
 };
 export const SOURCE_LABEL: Record<string, string> = {
-  cadastral: "Cadastral map", ori: "Drone ORI", municipal: "Municipal GIS", buildings: "Building footprints", revenue: "Revenue records",
+  cadastral: "Cadastral map", ori: "Drone imagery", municipal: "Municipal GIS", buildings: "Building footprints", revenue: "Revenue register",
 };
 export const STATUS_LABEL: Record<string, string> = {
   auto_accepted: "Accepted automatically", needs_review: "Needs review", validated: "Validated by officer", rejected: "Rejected",
 };
 
-// confidence -> green ramp, low values read as pale
+// confidence -> green ramp; low values read as pale
 export function confidenceFill(v: number): string {
   const t = Math.max(0, Math.min(1, (v - 0.4) / 0.6));
-  const l = 90 - t * 48; // 90% -> 42%
-  return `hsl(155 ${45 + t * 40}% ${l}%)`;
+  return `hsl(150 ${35 + t * 35}% ${92 - t * 52}%)`;
+}
+
+/** Hatch swatch for legends, matching the map patterns. */
+export function hatchCss(color: string): string {
+  return `repeating-linear-gradient(135deg, ${color} 0 1.4px, transparent 1.4px 4px)`;
 }

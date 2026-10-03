@@ -71,3 +71,29 @@ def test_api_review_round_trip(monkeypatch):
     export = c.get(f"/api/runs/{rid}/export.geojson").json()
     assert len(export["features"]) == summary["parcels"]
     assert c.get("/api/runs/bogus").status_code == 404
+
+
+def test_audit_chain_detects_tampering():
+    from app.store import DecisionStore
+    st = DecisionStore(":memory:")
+    st.put("small-7", "P-0001", "accept", {"owner": "revenue"}, "ok")
+    st.put("small-7", "P-0002", "reject", {}, "")
+    st.delete("small-7", "P-0001")
+    a = st.audit()
+    assert a["ok"] and a["length"] == 3 and a["head"]
+    st._db.execute("UPDATE audit SET payload='{\"note\": \"edited\", \"resolutions\": {}}' WHERE seq=1")
+    broken = st.audit()
+    assert not broken["ok"] and broken["broken_at"] == 1
+
+
+def test_parcel_detail_reports_which_sources_agree(monkeypatch):
+    from app import main
+    from app.store import DecisionStore
+    monkeypatch.setattr(main, "store", DecisionStore(":memory:"))
+    c = TestClient(main.app)
+    rid = c.post("/api/runs", json={"seed": 7, "size": "small"}).json()["id"]
+    pid = c.get(f"/api/runs/{rid}/review").json()[0]["id"]
+    d = c.get(f"/api/runs/{rid}/parcels/{pid}").json()
+    assert set(d["owner_agrees"]) == set(d["values"]["owner"])
+    assert c.get(f"/api/runs/{rid}").json()["origin_utm"][0] > 400000
+    assert c.get("/api/audit").json()["ok"]
