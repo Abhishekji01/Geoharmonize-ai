@@ -30,6 +30,8 @@ export type ParcelDetail = ParcelProps & {
 export type Audit = { ok: boolean; length: number; head: string | null; broken_at: number | null; recent: { seq: number; at: string; run: string; parcel: string; action: string; hash: string }[] };
 export type CatalogRow = { name: string; status: "modelled" | "extraction" | "planned"; note: string };
 
+const BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -45,17 +47,17 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
 }
 
 export const api = {
-  catalog: () => cached("catalog", () => fetch("/api/catalog").then((r) => j<CatalogRow[]>(r))),
+  catalog: () => cached("catalog", () => fetch(`${BASE_URL}/api/catalog`).then((r) => j<CatalogRow[]>(r))),
   createRun: (seed: number, size: string) =>
-    fetch("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seed, size }) }).then((r) => j<{ id: string }>(r)),
-  summary: (id: string) => fetch(`/api/runs/${id}`, { cache: "no-store" }).then((r) => j<RunSummary>(r)),
-  layer: (id: string, name: string) => cached(`${id}/${name}`, () => fetch(`/api/runs/${id}/layers/${name}`).then((r) => j<FC>(r))),
-  harmonised: (id: string) => fetch(`/api/runs/${id}/layers/harmonized`, { cache: "no-store" }).then((r) => j<FC<ParcelProps>>(r)),
-  parcel: (id: string, pid: string) => fetch(`/api/runs/${id}/parcels/${pid}`, { cache: "no-store" }).then((r) => j<ParcelDetail>(r)),
-  queue: (id: string) => fetch(`/api/runs/${id}/review`, { cache: "no-store" }).then((r) => j<(ParcelProps & { decision: string | null })[]>(r)),
+    fetch(`${BASE_URL}/api/runs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seed, size }) }).then((r) => j<{ id: string }>(r)),
+  summary: (id: string) => fetch(`${BASE_URL}/api/runs/${id}`, { cache: "no-store" }).then((r) => j<RunSummary>(r)),
+  layer: (id: string, name: string) => cached(`${id}/${name}`, () => fetch(`${BASE_URL}/api/runs/${id}/layers/${name}`).then((r) => j<FC>(r))),
+  harmonised: (id: string) => fetch(`${BASE_URL}/api/runs/${id}/layers/harmonized`, { cache: "no-store" }).then((r) => j<FC<ParcelProps>>(r)),
+  parcel: (id: string, pid: string) => fetch(`${BASE_URL}/api/runs/${id}/parcels/${pid}`, { cache: "no-store" }).then((r) => j<ParcelDetail>(r)),
+  queue: (id: string) => fetch(`${BASE_URL}/api/runs/${id}/review`, { cache: "no-store" }).then((r) => j<(ParcelProps & { decision: string | null })[]>(r)),
   review: (id: string, pid: string, body: { decision: "accept" | "reject"; resolutions: Record<string, string>; note: string }) =>
-    fetch(`/api/runs/${id}/review/${pid}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => j<ParcelProps>(r)),
-  undo: (id: string, pid: string) => fetch(`/api/runs/${id}/review/${pid}`, { method: "DELETE" }).then((r) => j<{ ok: boolean }>(r)),
-  audit: () => fetch("/api/audit", { cache: "no-store" }).then((r) => j<Audit>(r)),
-  exportUrl: (id: string) => `/api/runs/${id}/export.geojson`,
+    fetch(`${BASE_URL}/api/runs/${id}/review/${pid}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then((r) => j<ParcelProps>(r)),
+  undo: (id: string, pid: string) => fetch(`${BASE_URL}/api/runs/${id}/review/${pid}`, { method: "DELETE" }).then((r) => j<{ ok: boolean }>(r)),
+  audit: () => fetch(`${BASE_URL}/api/audit`, { cache: "no-store" }).then((r) => j<Audit>(r)),
+  exportUrl: (id: string) => `${BASE_URL}/api/runs/${id}/export.geojson`,
 };
